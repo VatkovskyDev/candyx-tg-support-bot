@@ -1,251 +1,277 @@
 import json
 import logging
-import sys
 import time
+import uuid
 from datetime import datetime, timedelta
 import os
-import g4f
 import asyncio
-from collections import defaultdict
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart, Command
+import g4f
 
-VERSION = "0.0.1-BASED"
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s - User: %(user_id)s', handlers=[logging.StreamHandler(sys.stdout)])
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class BotCore:
-    _MESSAGES = {
-        "welcome": "🎮 Добро пожаловать в техподдержку CandyxPE!\nВыберите опцию:",
-        "unknown": "⚠️ Неверная команда.",
-        "ai_on": "🧠 ИИ-ассистент готов! Задавайте вопросы.",
-        "human_on": "👨‍💻 Агент подключён. Опишите проблему.",
-        "human_off": "🔙 Вы вернулись к боту.",
-        "report_staff": "🚨 Жалоба на сотрудника\nПодробно опишите ситуацию:",
-        "report_bug": "🛠 Сообщение о баге\nОпишите проблему:",
-        "ai_off": "🔙 ИИ-ассистент отключён.",
-        "cancel": "✅ Операция отменена.",
-        "admin_denied": "🔒 Доступ запрещён.",
-        "admin_panel": "⚙️ Панель управления\nВыберите опцию:",
-        "manage_agents": "👥 Управление агентами\nВыберите действие:",
-        "ban_user": "🚫 Управление блокировками\nВыберите действие:",
-        "broadcast": "📣 Введите текст объявления:",
-        "add_agent": "➕ Введите ID и роль (agent/admin/manager, например, '123456 agent'):",
-        "remove_agent": "➖ Введите ID для удаления роли:",
-        "ban": "🚫 Введите ID и часы блокировки (например, '123456 24'):",
-        "unban": "✅ Введите ID для разблокировки:",
-        "no_input": "⚠️ Введите данные.",
-        "report_staff_sent": "✅ Жалоба отправлена.",
-        "report_bug_sent": "✅ Баг отправлен.",
-        "report_staff_failed": "⚠️ Ошибка отправки жалобы.",
-        "report_bug_failed": "⚠️ Ошибка отправки бага.",
-        "broadcast_sent": "✅ Объявление разослано.",
-        "broadcast_failed": "⚠️ Ошибка рассылки объявления.",
-        "self_agent": "⚠️ Нельзя назначить себя.",
-        "already_agent": "⚠️ id{agent_id} уже агент.",
-        "agent_added": "✅ {role} id{agent_id} назначен.",
-        "self_remove": "⚠️ Нельзя удалить себя.",
-        "agent_removed": "✅ {role} id{agent_id} удалён.",
-        "not_agent": "⚠️ id{agent_id} не агент.",
-        "invalid_format": "⚠️ Формат: {text}. Пример: '{example}'.",
-        "invalid_id": "⚠️ Введите корректный ID.",
-        "self_ban": "⚠️ Нельзя заблокировать себя.",
-        "agent_ban": "⚠️ Нельзя заблокировать агента.",
-        "banned": "🚫 id{target_id} заблокирован на {hours} часов.",
-        "banned_notify": "🚫 Вы заблокированы на {hours} часов.",
-        "unbanned": "✅ id{target_id} разблокирован.",
-        "unbanned_notify": "✅ Вы разблокированы.",
-        "not_banned": "⚠️ id{target_id} не заблокирован.",
-        "banned_user": "🚫 Вы заблокированы. Попробуйте позже.",
-        "chat_unavailable": "⚠️ Админ-чат недоступен.",
-        "error": "⚠️ Ошибка. Попробуйте снова.",
-        "get_agents": "📋 Агенты:\n{agents_list}",
-        "stats": "📈 Статистика:\nПользователи: {users}\nСессии: {sessions}\nБлокировки: {bans}",
-        "message_too_long": "⚠️ Сообщение слишком длинное (макс. 4096 символов).",
-        "permission_denied": "⚠️ Разрешите сообщения от бота."
+class SupportBot:
+    VERSION = "0.0.2"
+    CODE_NAME = "NOVA"
+
+    MESSAGES = {
+        "welcome": "😘 Добро пожаловать в бота тех.поддержки CandyxPE!\n\nВыберите действие:\n╰─> Официальное сообщество — информация о проекте.",
+        "unknown": "▸ Команда не распознана.",
+        "ai_on": "🤖 ИИ запущен! Задавайте вопросы.",
+        "ai_off": "✱ ИИ отключен. Вернулись в меню.",
+        "ask_question": "⦿ Задать вопрос агенту.\n\nОпишите ваш вопрос подробно.",
+        "question_sent": "▸ Ваш вопрос отправлен! Токен: {token}\nСохраните токен для отслеживания.",
+        "question_failed": "▸ Ошибка при отправке вопроса.",
+        "report_staff": "⦿ Жалоба на персонал.\n\nОпишите ситуацию подробно.",
+        "report_bug": "⦿ Сообщите о недочете техподдержке.",
+        "cancel": "▸ Действие отменено.",
+        "admin_denied": "╰─> Доступ ограничен.",
+        "admin_panel": "▪️ Панель управления.",
+        "manage_agents": "◾◾ Управление сотрудниками.",
+        "ban_user": "⦯ Управление блокировками.\n\nОзнакомьтесь с правилами.",
+        "broadcast": "◾ Введите текст объявления.",
+        "add_agent": "▸ Укажите ID и роль: '123456789 agent/admin/manager'.",
+        "remove_agent": "▸ Укажите ID для снятия роли.",
+        "ban": "◾ Укажите ID и часы блокировки: '123456789 24'.",
+        "unban": "✱ Укажите ID для разблокировки.",
+        "no_input": "▸ Вы не ввели данные.",
+        "report_staff_sent": "▸ Жалоба отправлена.",
+        "report_bug_sent": "▸ Недочет зафиксирован. Спасибо!",
+        "report_staff_failed": "▸ Ошибка при отправке жалобы.",
+        "report_bug_failed": "▸ Ошибка при отправке недочета.",
+        "broadcast_sent": "⦯ Объявление отправлено!",
+        "broadcast_failed": "▸ Ошибка отправки объявления.",
+        "self_agent": "◾ Нельзя назначить себя.",
+        "already_agent": "╰─> @{agent_id} уже сотрудник.",
+        "agent_added": "╰─> {role} @{agent_id} назначен.",
+        "self_remove": "▸ Нельзя снять роль с себя.",
+        "agent_removed": "╰─> @{agent_id} снят с роли {role}.",
+        "not_agent": "⦯ @{agent_id} не сотрудник.",
+        "invalid_format": "▸ Формат: {text}. Пример: '{example}'.",
+        "invalid_id": "▸ Укажите корректный ID.",
+        "self_ban": "╰─> Нельзя заблокировать себя.",
+        "agent_ban": "╰─> Нельзя заблокировать сотрудника.",
+        "banned": "▸ БЛОКИРОВКА:\n╰─> @{target_id}\n╰─> Срок: {hours} ч.",
+        "banned_notify": "▸ БЛОКИРОВКА:\n╰─> Причина: нарушение.\n╰─> Срок: {hours} ч.\nОбратитесь к СЕО или СОО.",
+        "unbanned": "◾ @{target_id} разблокирован.",
+        "unbanned_notify": "▸ БЛОКИРОВКА ОТМЕНЕНА:\n╰─> Причина: решение руководства.",
+        "not_banned": "▸ @{target_id} не заблокирован.",
+        "banned_user": "▸ Вы заблокированы.",
+        "chat_unavailable": "⦯ Чат недоступен! Обратитесь к СОО.",
+        "error": "◾ Ошибка! Попробуйте позже.",
+        "get_agents": "▸ Сотрудники:\n{agents_list}",
+        "version": "⦯ Версия: {version} ({code_name})",
+        "stats": "▸ Статистика:\nПользователей: {users}\nСессий: {sessions}\nБлокировок: {bans}",
+        "message_too_long": "◾ Сообщение слишком длинное (макс. 4096).",
+        "permission_denied": "◾ Разрешите сообщения от бота.",
+        "token_success": "▸ Авторизация успешна! Вы назначены {role}.",
+        "token_invalid": "▸ Неверный токен. Обратитесь к администрации.",
+        "token_already_used": "▸ Токен уже использован.",
+        "response_menu": "▸ Выберите действие для ответа.",
+        "no_pending_questions": "▸ Нет открытых вопросов.",
+        "select_question": "▸ Выберите вопрос для ответа:",
+        "enter_response": "▸ Введите ответ для вопроса с токеном {token}:\nВопрос: {question}",
+        "response_sent": "▸ Ответ отправлен пользователю @{user_id}."
     }
 
-    _PREFIXES = {
-        "staff": "🚨 ЖАЛОБА НА СОТРУДНИКА",
-        "bug": "🛠 БАГ",
-        "agent": "✅ ПОДКЛЮЧЕНИЕ К АГЕНТУ",
-        "broadcast": "📣 ОБЪЯВЛЕНИЕ",
-        "ban": "🚫 БЛОКИРОВКА",
-        "unban": "✅ РАЗБЛОКИРОВКА",
-        "add_agent": "➕ НОВЫЙ АГЕНТ",
-        "remove_agent": "➖ УДАЛЕНИЕ АГENTA"
+    PREFIXES = {
+        "staff": "📝 НАРУШЕНИЕ ПЕРСОНАЛА",
+        "bug": "⚠️ ТЕХНИЧЕСКАЯ ОШИБКА",
+        "question": "✉️ ВОПРОС ПОЛЬЗОВАТЕЛЯ",
+        "broadcast": "📢 ОБЩЕЕ ОБЪЯВЛЕНИЕ",
+        "ban": "🔒 НАЛОЖЕНИЕ БЛОКИРОВКИ",
+        "unban": "🔓 РАЗБЛОКИРОВКА ДОСТУПА",
+        "add_agent": "👥 ДОБАВЛЕНИЕ СОТРУДНИКА",
+        "remove_agent": "🗑 УДАЛЕНИЕ СОТРУДНИКА"
     }
 
-    def __init__(self, admin_chat_id):
-        self.admin_chat_id = admin_chat_id
-        self.rules = self._load_file('candyxpe_rules.txt', "Правила отсутствуют.", text=True)
-        self.user_contexts = defaultdict(list)
-        self.user_ai_mode = set()
-        self.user_action_mode = {}
-        self.user_human_mode = set()
-        self.banned_users = {}
-        self.agents = self._load_file('candyxpe_agents.json', {})
-        self.stats = {"messages_processed": 0, "users": set()}
-        self.spam_protection = defaultdict(list)
-        self.system_prompt = (
-            "Ты - ИИ-ассистент техподдержки CandyxPE. Отвечай на русском, только по темам CandyxPE: тех. вопросы, геймплей, баги, поддержка. Используй правила:\n{rules}\n"
-            "Тон: вежливый, профессиональный, краткий. Ссылайся на пункты правил при запросе (например, 3.1). Если пункт не найден, укажи это. "
-            "Не давай код, инструкции по взлому или оффтоп. Если запрос неясен, ответь: 'Уточните детали или обратитесь к агенту.'\n"
+    def __init__(self, token, admin_chat):
+        self.token = token
+        self.admin_chat = admin_chat
+        self.bot = Bot(token=token)
+        self.dp = Dispatcher()
+        self.rules = self.load_file('candyxpe_rules.txt', "Правила отсутствуют.", text=True)
+        self.agents = self.load_file('candyxpe_agents.json', {"7583895254": {"role": "manager"}})
+        self.tokens = self.load_file('tokens.json', {})
+        self.banned = {}
+        self.ai_users = set()
+        self.actions = {}
+        self.contexts = {}
+        self.stats = {"users": set(), "messages": 0}
+        self.spam = {}
+        self.pending_questions = {}
+        self.prompt = (
+            "Ты - ИИ-ассистент техподдержки CandyxPE. Отвечай на русском по темам проекта: техвопросы, геймплей, баги, поддержка. Используй правила:\n{rules}\n\n"
+            "Тон: вежливый, профессиональный. Ссылайся на пункты правил, если запрошены. Если пункт не найден, предложи уточнить. "
+            "Не давай код или информацию вне CandyxPE. Если запрос неясен, ответь: 'Уточните детали или задайте вопрос агенту.'\n"
             "Примеры:\n- Баг: 'Опишите проблему, укажите ID.'\n- Правила: 'Пункт 3.1: [цитата].'"
         )
+        self.setup_handlers()
 
-    def _load_file(self, path, default, text=False):
+    def load_file(self, path, default, text=False):
         if not os.path.exists(path):
-            self._save_file(path, default)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read().strip() if text else json.load(f)
-                if text and not content:
-                    return default
-                if text and len(content) > 100000:
-                    return content[:1000] + "..."
-                return content
-        except Exception as e:
-            return default
+            self.save_file(path, default)
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read().strip() if text else json.load(f)
 
-    def _save_file(self, path, data):
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                if isinstance(data, str):
-                    f.write(data)
-                else:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    async def _handle_error(self, user_id, error, context):
-        await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-
-    def is_agent(self, user_id):
-        return str(user_id) in self.agents
-
-    def is_admin(self, user_id):
-        return self.is_agent(user_id) and self.agents.get(str(user_id), {}).get("role") in ["admin", "manager"]
-
-    def clean_message(self, message):
-        return message.replace('{}', '').replace('{{', '').replace('}}', '').strip()[:4096]
-
-    async def _get_keyboard(self, mode, user_id=None):
-        keyboards = {
-            "main": [
-                [InlineKeyboardButton("🧠 ИИ-Ассистент", callback_data="ai_agent")],
-                [InlineKeyboardButton("👨‍💻 Связь с агентом", callback_data="contact_agent")],
-                [InlineKeyboardButton("🚨 Жалоба на персонал", callback_data="report_staff")],
-                [InlineKeyboardButton("🛠 Сообщение о баге", callback_data="report_bug")]
-            ],
-            "ai": [[InlineKeyboardButton("🔙 Выход", callback_data="end_ai")]],
-            "human": [[InlineKeyboardButton("🔙 Выход", callback_data="end_human")]],
-            "action": [[InlineKeyboardButton("❌ Отмена", callback_data="cancel")]],
-            "admin": [
-                [InlineKeyboardButton("👥 Агенты", callback_data="manage_agents")],
-                [InlineKeyboardButton("🚫 Блокировки", callback_data="ban_user")],
-                [InlineKeyboardButton("📣 Объявление", callback_data="broadcast")],
-                [InlineKeyboardButton("📈 Статистика", callback_data="stats")],
-                [InlineKeyboardButton("🔙 Выход", callback_data="cancel")]
-            ],
-            "manage_agents": [
-                [InlineKeyboardButton("➕ Добавить", callback_data="add_agent")],
-                [InlineKeyboardButton("➖ Удалить", callback_data="remove_agent")],
-                [InlineKeyboardButton("📋 Список", callback_data="getagents")],
-                [InlineKeyboardButton("🔙 Выход", callback_data="cancel")]
-            ],
-            "ban_user": [
-                [InlineKeyboardButton("🚫 Заблокировать", callback_data="ban")],
-                [InlineKeyboardButton("✅ Разблокировать", callback_data="unban")],
-                [InlineKeyboardButton("🔙 Выход", callback_data="cancel")]
-            ]
-        }
-        buttons = keyboards.get(mode, keyboards["main"])
-        if user_id and mode == "main" and self.is_admin(user_id):
-            buttons.insert(0, [InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
-        return InlineKeyboardMarkup(buttons)
-
-    async def _send_to_admin(self, platform, user_id, message, action, attachments=None):
-        if platform != "telegram":
-            return False
-        for attempt in range(3):
-            try:
-                prefix = self._PREFIXES.get(action, "✅ СООБЩЕНИЕ")
-                msg = f"{prefix}{await self._get_user_info(user_id)}\n\n{self.clean_message(message)}"
-                if attachments:
-                    for att in attachments.split(','):
-                        await self.app.bot.send_message(chat_id=self.admin_chat_id, text=msg)
-                        await self.app.bot.send_document(chat_id=self.admin_chat_id, document=att)
-                else:
-                    await self.app.bot.send_message(chat_id=self.admin_chat_id, text=msg)
-                return True
-            except Exception:
-                if attempt < 2:
-                    await asyncio.sleep(1)
-                else:
-                    return False
-
-    async def _send_broadcast(self, user_id, message):
-        if not self.is_admin(user_id):
-            return False
-        sent_count = 0
-        async for uid in self._async_iter_agents():
-            if int(uid) not in self.banned_users:
-                try:
-                    await self._send_message(int(uid), f"📣 CandyxPE:\n{self.clean_message(message)}", await self._get_keyboard("main", int(uid)))
-                    sent_count += 1
-                except Exception:
-                    pass
-        await self._send_to_admin("telegram", user_id, f"Объявление отправлено {sent_count} пользователям.", "broadcast")
-        return True
-
-    async def _async_iter_agents(self):
-        for uid in self.agents:
-            yield uid
-
-    async def _send_message(self, user_id, message_key, keyboard=None, info=None):
-        if not isinstance(user_id, int):
-            return
-        msg = self._MESSAGES.get(message_key, message_key)
-        if info:
-            try:
-                msg = msg.format(**info)
-            except KeyError:
-                msg = message_key
-        cleaned_message = self.clean_message(msg)
-        try:
-            if await self._check_user_permission(user_id):
-                await self.app.bot.send_message(chat_id=user_id, text=cleaned_message, reply_markup=keyboard)
+    def save_file(self, path, data):
+        with open(path, 'w', encoding='utf-8') as f:
+            if isinstance(data, str):
+                f.write(data)
             else:
-                await self.app.bot.send_message(chat_id=user_id, text=self._MESSAGES["permission_denied"])
-        except Exception:
-            await self.app.bot.send_message(chat_id=user_id, text=self._MESSAGES["permission_denied"])
+                json.dump(data, f, ensure_ascii=False, indent=2)
 
-    async def _check_user_permission(self, user_id):
+    async def send_message(self, user, key, keyboard=None, info=None):
         try:
-            chat = await self.app.bot.get_chat(user_id)
-            return chat.can_send_messages if hasattr(chat, 'can_send_messages') else True
+            msg = self.MESSAGES.get(key, key) or "Ошибка: сообщение не найдено"
+            if info:
+                msg = msg.format(**info)
+            await self.bot.send_message(
+                chat_id=user,
+                text=msg,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            logger.info(f"Message sent to user {user}: {msg[:50]}")
+        except Exception as e:
+            logger.error(f"Error sending message to user {user}: {e}")
+            await self.bot.send_message(
+                chat_id=user,
+                text=self.MESSAGES["error"],
+                reply_markup=self.get_keyboard("main", user)
+            )
+
+    def get_keyboard(self, mode, user=None):
+        keyboards = {
+            "main": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="🤖️ ПОДДЕРЖКА ИНТЕЛЛЕКТА"), KeyboardButton(text="❓ Задать ВОПРОС")],
+                    [KeyboardButton(text="📝 ЖАЛОБА НА ПЕРСОНАЛ"), KeyboardButton(text="⚠️ ВОЗНИКЛА НЕПОЛАДКА")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            ),
+            "ai": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="🔄 ЗАВЕРШИТЬ ПОДДЕРЖКУ")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            ),
+            "action": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="🔄 АННУЛИРОВАТЬ ОПЕРАЦИЮ")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            ),
+            "admin": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="🧑‍🏫 УПРАВЛЕНИЕ ШТАТОМ"), KeyboardButton(text="⛏ БЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ")],
+                    [KeyboardButton(text="📢 МАССОВОЕ ОПОВЕЩЕНИЕ"), KeyboardButton(text="🔄 ВЕРНУТЬСЯ НАЗАД")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            ),
+            "manage_agents": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="👥 ДОБАВЛЕНИЕ СОТРУДНИКА"), KeyboardButton(text="🗑 УДАЛЕНИЕ СОТРУДНИКА")],
+                    [KeyboardButton(text="🔄 ВЕРНУТЬСЯ НАЗАД")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            ),
+            "ban_user": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="🔒 ЗАБЛОКИРОВАТЬ ДОСТУП"), KeyboardButton(text="🔓 РАЗБЛОКИРОВКА ДОСТУПА")],
+                    [KeyboardButton(text="🔄 ВЕРНУТЬСЯ НАЗАД")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            ),
+            "response": ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="📬 ОТВЕТИТЬ ПОЛЬЗОВАТЕЛЮ"), KeyboardButton(text="📋 СПИСОК ВОПРОСОВ")],
+                    [KeyboardButton(text="🔄 ВЕРНУТЬСЯ В МЕНЮ")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False
+            )
+        }
+        keyboard = keyboards.get(mode, keyboards["main"])
+        if user and mode == "main" and str(user) in self.agents:
+            keyboard.keyboard.insert(0, [KeyboardButton(text="🛠 ПАНЕЛЬ УПРАВЛЕНИЯ")])
+            keyboard.keyboard.insert(1, [KeyboardButton(text="📬 МЕНЮ ОТВЕТОВ")])
+        return keyboard
+
+    async def get_question_keyboard(self):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        for token, data in self.pending_questions.items():
+            button_text = f"Вопрос (Токен: {token[:8]}...)"
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(text=button_text, callback_data=f"answer_{token}")
+            ])
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(text="🔄 ВЕРНУТЬСЯ", callback_data="back_to_response")
+        ])
+        return keyboard
+
+    async def send_admin(self, user, message, action, token=None):
+        prefix = self.PREFIXES.get(action, "◾ СООБЩЕНИЕ")
+        try:
+            user_info = await self.bot.get_chat(user)
+            info = f"\n👤 @{user_info.username or user_info.id}\n◾ ID: {user}\n╰─> Рассмотрите обращение."
         except Exception:
+            info = f"\n👤 @{user}\n◾ ID: {user}\n╰─> Рассмотрите обращение."
+        if token:
+            info += f"\n◾ Токен: {token}"
+        try:
+            await self.bot.send_message(
+                chat_id=self.admin_chat,
+                text=f"{prefix}{info}\n\n{message}",
+                parse_mode="HTML"
+            )
+            logger.info(f"Notification sent to admin chat {self.admin_chat} (type: {action}): {message[:50]}")
+            for agent_id in self.agents:
+                if int(agent_id) in self.stats["users"]:
+                    try:
+                        await self.bot.send_message(
+                            chat_id=int(agent_id),
+                            text=f"{prefix}{info}\n\n{message}",
+                            parse_mode="HTML",
+                            reply_markup=await self.get_question_keyboard()
+                        )
+                        logger.info(f"Notification sent to agent {agent_id} (type: {action}): {message[:50]}")
+                        await asyncio.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Error sending notification to agent {agent_id}: {e}")
+            if action == "question":
+                self.pending_questions[token] = {
+                    "user_id": user,
+                    "message": message,
+                    "timestamp": datetime.now()
+                }
+            return True
+        except Exception as e:
+            logger.error(f"Error sending to admin chat {self.admin_chat}: {e}")
+            await self.send_message(user, "chat_unavailable")
             return False
 
-    async def _process_ai_response(self, user_id, response):
-        await asyncio.sleep(1)
-        processed_response = response.replace('*', '')
-        if not processed_response:
-            processed_response = "⚠️ Ошибка обработки ответа."
-        await self._send_message(user_id, processed_response, await self._get_keyboard("ai", user_id))
-
-    async def _get_ai_response(self, user_id, message):
+    def get_ai_response(self, user, message):
+        if user not in self.contexts:
+            self.contexts[user] = []
+        self.contexts[user].append({"role": "user", "content": message})
+        self.contexts[user] = self.contexts[user][-5:]
+        prompt = self.prompt.format(rules=self.rules)
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "system", "content": f"Правила CandyxPE:\n{self.rules}"}
+        ] + self.contexts[user]
         try:
-            self.user_contexts[user_id].append({"role": "user", "content": message})
-            self.user_contexts[user_id] = self.user_contexts[user_id][-5:]
-            prompt = self.system_prompt.format(rules=self.rules)
-            messages = [
-                {"role": "system", "content": prompt},
-                {"role": "system", "content": f"Правила CandyxPE:\n{self.rules}"}
-            ] + self.user_contexts[user_id]
-            response = await asyncio.to_thread(g4f.ChatCompletion.create,
+            response = g4f.ChatCompletion.create(
                 model="gpt-4",
                 messages=messages,
                 max_tokens=500,
@@ -253,419 +279,292 @@ class BotCore:
                 timeout=10
             )
             if isinstance(response, str) and response.strip():
-                cleaned_response = self.clean_message(response)
-                self.user_contexts[user_id].append({"role": "assistant", "content": cleaned_response})
-                return cleaned_response
-            return "⚠️ Ошибка. Обратитесь к поддержке."
-        except Exception:
-            return "⚠️ Ошибка. Обратитесь к поддержке."
-
-    async def _handle_report(self, user_id, action, text, attachments=None):
-        success_key = f"report_{action}_sent"
-        failure_key = f"report_{action}_failed"
-        try:
-            if await self._send_to_admin("telegram", user_id, text, action, attachments):
-                await self._send_message(user_id, success_key, await self._get_keyboard("main", user_id))
-            else:
-                await self._send_message(user_id, failure_key, await self._get_keyboard("main", user_id))
-        except Exception:
-            await self._send_message(user_id, failure_key, await self._get_keyboard("main", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
-
-    async def _handle_broadcast(self, user_id, message):
-        try:
-            if await self._send_broadcast(user_id, message):
-                await self._send_message(user_id, "broadcast_sent", await self._get_keyboard("admin", user_id))
-            else:
-                await self._send_message(user_id, "broadcast_failed", await self._get_keyboard("admin", user_id))
-        except Exception:
-            await self._send_message(user_id, "broadcast_failed", await self._get_keyboard("admin", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
-
-    async def _handle_add_agent(self, user_id, text):
-        try:
-            agent_id, role = map(str.strip, text.split(maxsplit=1))
-            agent_id = int(agent_id)
-            if role not in ["agent", "admin", "manager"]:
-                raise ValueError
-            if agent_id == user_id:
-                await self._send_message(user_id, "self_agent", await self._get_keyboard("manage_agents", user_id))
-            elif str(agent_id) in self.agents:
-                await self._send_message(user_id, "already_agent", await self._get_keyboard("manage_agents", user_id), {"agent_id": agent_id})
-            else:
-                self.agents[str(agent_id)] = {"role": role}
-                self._save_file('candyxpe_agents.json', self.agents)
-                await self._send_message(user_id, "agent_added", await self._get_keyboard("admin", user_id), {"role": role.capitalize(), "agent_id": agent_id})
-                await self._send_to_admin("telegram", user_id, f"{role.capitalize()} @id{agent_id} назначен.", "add_agent")
-        except ValueError:
-            await self._send_message(user_id, "invalid_format", await self._get_user_info("action", user_id), {"type": "<ID> <agent/admin/manager>", "example": "123456 agent"})
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
-
-    async def _handle_remove_agent(self, user_id, text):
-        try:
-            agent_id = int(text.strip())
-            if agent_id == user_id:
-                await self._send_message(user_id, "self_remove", await self._get_keyboard("manage_agents", user_id))
-            elif str(agent_id) in self.agents:
-                role = self.agents[str(agent_id)]["role"]
-                del self.agents[str(agent_id)]
-                self._save_file('candyxpe_agents.json', self.agents)
-                await self._send_message(user_id, "agent_removed", await self._get_keyboard("admin", user_id), {"role": role.capitalize(), "agent_id": agent_id})
-                await self._send_to_admin("telegram", user_id, f"{role.capitalize()} @id{agent_id} удалён.", "remove")
-            else:
-                await self._send_message(user_id, "not_agent", await self._get_keyboard("manage_agents", user_id), {"agent_id": agent_id})
-        except ValueError:
-            await self._send_message(user_id, "invalid_id", await self._get_keyboard("action", user_id))
+                cleaned_response = response.replace('*', '')
+                self.contexts[user].append({"role": "assistant", "content": cleaned_response})
+                return cleaned_response[:4090] + "..." if len(cleaned_response) > 4096 else cleaned_response
+            logger.error("AI error: empty or invalid response")
+            return self.MESSAGES["error"]
         except Exception as e:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
+            logger.error(f"AI error: {e}")
+            return self.MESSAGES["error"]
 
-    async def _handle_get_agents(self, user_id):
-        try:
-            if not self.is_admin(user_id) or self.agents.get(str(user_id), []).get("role") != "manager":
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-                return
-            agents_list = "\n".join([f"@id{agent_id} - {role['role'].capitalize()}" for agent_id, role in self.agents.items()])
-            await self.app.bot.send_message(user_id, "get agents", await self._get_keyboard("manage_users", user_id), extra={"agents_list": agents_list or "No agents."})
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-
-    async def _handle_stats(self, user_id):
-        try:
-            if not self.is_admin(user_id):
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-                return
-            stats_info = {
-                "users": len(self.stats["users"]),
-                "sessions": len(self.user_ai_mode | self.user_human_mode),
-                "bans": len(self.banned_users)
-            }
-            await self._send_message(user_id, "stats", await self._get_keyboard("admin", user_id), stats_info)
-
-        except Exception as e:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-
-    async def _handle_ban(self, user_id, text):
-        try:
-            target_id, hours = map(int, text.split())
-            if target_id == user_id:
-                await self._send_message(user_id, "self_ban", await self._get_keyboard("ban_user", user_id))
-            elif self.is_agent(target_id):
-                await self._send_message(user_id, "agent_ban", await self._get_keyboard("ban_user", user_id))
+    async def process_command(self, user, cmd, message):
+        async def execute_command(action, success_message, keyboard_mode, condition=True):
+            if condition:
+                if action:
+                    await action()
+                if success_message:
+                    await self.send_message(user, success_message, self.get_keyboard(keyboard_mode, user))
             else:
-                self.banned_users[target_id] = datetime.now() + timedelta(hours=hours)
-                await self._send_message(user_id, "banned", await self._get_keyboard("ban_user", user_id), {"target_id": target_id, "hours": hours})
-                await self._send_message(target_id, "banned_notify", await self._get_keyboard("main", target_id), {"hours": hours})
-                await self._send_to_admin("telegram", user_id, f"id{target_id} заблокирован на {hours} часов.", "ban")
-        except ValueError:
-            await self._send_message(user_id, "invalid_format", await self._get_keyboard("action", user_id), {"text": "<ID> <hours>", "example": "123456 24"})
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
-
-    async def _handle_unban(self, user_id, text):
-        try:
-            target_id = int(text.strip())
-            if target_id in self.banned_users:
-                del self.banned_users[target_id]
-                await self._send_message(user_id, "unbanned", await self._get_keyboard("ban_user", user_id), {"target_id": target_id})
-                await self._send_message(target_id, "unbanned_notify", await self._get_keyboard("main", target_id))
-                await self._send_to_admin("telegram", user_id, f"id{target_id} разблокирован.", "unban")
-            else:
-                await self._send_message(user_id, "not_banned", await self._get_keyboard("ban_user", user_id), {"target_id": target_id})
-        except ValueError:
-            await self._send_message(user_id, "invalid_id", await self._get_keyboard("action", user_id))
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
-
-    async def _reset_user_state(self, user_id):
-        self.user_action_mode.pop(user_id, None)
-        self.user_ai_mode.discard(user_id)
-        self.user_human_mode.discard(user_id)
-        self.user_contexts.pop(user_id, None)
-
-    async def _handle_command(self, user_id, cmd):
-        async def ai_agent():
-            self.user_ai_mode.add(user_id)
-            self.user_human_mode.discard(user_id)
-            await self._send_message(user_id, "ai_on", await self._get_keyboard("ai", user_id))
-
-        async def contact_agent():
-            self.user_human_mode.add(user_id)
-            self.user_ai_mode.discard(user_id)
-            await self._send_to_admin("telegram", user_id, "Игрок подключён к агенту.", "agent")
-            await self._send_message(user_id, "human_on", await self._get_keyboard("human", user_id))
-
-        async def end_human():
-            self.user_human_mode.discard(user_id)
-            await self._send_message(user_id, "human_off", await self._get_keyboard("main", user_id))
-            await self._reset_user_state(user_id)
-
-        async def report_staff():
-            self.user_action_mode[user_id] = "staff"
-            self.user_human_mode.discard(user_id)
-            await self._send_message(user_id, "report_staff", await self._get_keyboard("action", user_id))
-
-        async def report_bug():
-            self.user_action_mode[user_id] = "bug"
-            await self._send_message(user_id, "report_bug", await self._get_keyboard("action", user_id))
-
-        async def end_ai():
-            self.user_ai_mode.discard(user_id)
-            self.user_action_mode.pop(user_id, None)
-            self.user_contexts.pop(user_id, None)
-            self.user_human_mode.discard(user_id)
-            await self._send_message(user_id, "ai_off", await self._get_keyboard("main", user_id))
-            await self._reset_user_state(user_id)
-
-        async def cancel():
-            self.user_action_mode.pop(user_id, None)
-            self.user_ai_mode.discard(user_id)
-            self.user_human_mode.discard(user_id)
-            await self._send_message(user_id, "cancel", await self._get_keyboard("main", user_id))
-            await self._reset_user_state(user_id)
-
-        async def admin_panel():
-            if self.is_admin(user_id):
-                await self._send_message(user_id, "admin_panel", await self._get_keyboard("admin", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("main", user_id))
-
-        async def manage_agents():
-            if self.is_admin(user_id):
-                await self._send_message(user_id, "manage_agents", await self._get_keyboard("manage_agents", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def ban_user():
-            if self.is_admin(user_id):
-                await self._send_message(user_id, "ban_user", await self._get_keyboard("ban_user", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def broadcast():
-            if self.is_admin(user_id):
-                self.user_action_mode[user_id] = "broadcast"
-                await self._send_message(user_id, "broadcast", await self._get_keyboard("action", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def add_agent():
-            if self.is_admin(user_id):
-                self.user_action_mode[user_id] = "add_agent"
-                await self._send_message(user_id, "add_agent", await self._get_keyboard("action", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def remove_agent():
-            if self.is_admin(user_id):
-                self.user_action_mode[user_id] = "remove_agent"
-                await self._send_message(user_id, "remove_agent", await self._get_keyboard("action", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def ban():
-            if self.is_admin(user_id):
-                self.user_action_mode[user_id] = "ban"
-                await self._send_message(user_id, "ban", await self._get_keyboard("action", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def unban():
-            if self.is_admin(user_id):
-                self.user_action_mode[user_id] = "unban"
-                await self._send_message(user_id, "unban", await self._get_keyboard("action", user_id))
-            else:
-                await self._send_message(user_id, "admin_denied", await self._get_keyboard("admin", user_id))
-
-        async def getagents():
-            await self._handle_get_agents(user_id)
-
-        async def stats():
-            await self._handle_stats(user_id)
-
-        async def unknown():
-            await self._send_message(user_id, "unknown", await self._get_keyboard("main", user_id))
+                await self.send_message(user, "admin_denied", self.get_keyboard("admin", user))
 
         commands = {
-            "ai_agent": ai_agent,
-            "contact_agent": contact_agent,
-            "end_human": end_human,
-            "report_staff": report_staff,
-            "report_bug": report_bug,
-            "end_ai": end_ai,
-            "cancel": cancel,
-            "admin_panel": admin_panel,
-            "manage_agents": manage_agents,
-            "ban_user": ban_user,
-            "broadcast": broadcast,
-            "add_agent": add_agent,
-            "remove_agent": remove_agent,
-            "ban": ban,
-            "unban": unban,
-            "getagents": getagents,
-            "stats": stats
+            "ai_agent": lambda: execute_command(lambda: self.async_action(lambda: self.ai_users.add(user)), "ai_on", "ai", True),
+            "ask_question": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "question"})), "ask_question", "action", True),
+            "report_staff": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "staff"})), "report_staff", "action", True),
+            "report_bug": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "bug"})), "report_bug", "action", True),
+            "end_ai": lambda: execute_command(lambda: self.async_action(lambda: (self.ai_users.discard(user), self.actions.pop(user, None), self.contexts.pop(user, None))), "ai_off", "main", True),
+            "cancel": lambda: execute_command(lambda: self.async_action(lambda: (self.actions.pop(user, None), self.ai_users.discard(user))), "cancel", "main", True),
+            "admin_panel": lambda: execute_command(None, "admin_panel", "admin", str(user) in self.agents),
+            "manage_agents": lambda: execute_command(None, "manage_agents", "manage_agents", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "ban_user": lambda: execute_command(None, "ban_user", "ban_user", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "broadcast": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "broadcast"})), "broadcast", "action", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "add_agent": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "add_agent"})), "add_agent", "action", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "remove_agent": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "remove_agent"})), "remove_agent", "action", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "ban": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "ban"})), "ban", "action", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "unban": lambda: execute_command(lambda: self.async_action(lambda: self.actions.update({user: "unban"})), "unban", "action", str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]),
+            "getagents": lambda: execute_command(None, "get_agents", "manage_agents", str(user) in self.agents and self.agents[str(user)].get("role") == "manager"),
+            "stats": lambda: execute_command(None, "stats", "admin", str(user) in self.agents),
+            "version": lambda: execute_command(None, "version", "main", True),
+            "response_menu": lambda: execute_command(None, "response_menu", "response", str(user) in self.agents),
+            "list_questions": lambda: execute_command(lambda: self.list_pending_questions(user), None, "response", str(user) in self.agents),
+            "answer_user": lambda: execute_command(lambda: self.show_questions_for_response(user), None, "response", str(user) in self.agents)
         }
-        await commands.get(cmd.lower(), unknown)()
 
-    async def _check_spam(self, user_id):
-        current_time = time.time()
-        self.spam_protection[user_id] = [t for t in self.spam_protection[user_id] if current_time - t < 30]
-        if len(self.spam_protection[user_id]) >= 3:
+        if cmd == "token":
+            await self.handle_token(user, message.text)
+        else:
+            await commands.get(cmd, lambda: self.send_message(user, "unknown", self.get_keyboard("main", user)))()
+
+    async def handle_token(self, user, text):
+        try:
+            _, token = text.split(maxsplit=1)
+            if token in self.tokens:
+                if self.tokens[token].get("used"):
+                    await self.send_message(user, "token_already_used", self.get_keyboard("main", user))
+                else:
+                    role = self.tokens[token]["role"]
+                    self.agents[str(user)] = {"role": role}
+                    self.tokens[token]["used"] = True
+                    self.tokens[token]["user_id"] = user
+                    self.save_file('candyxpe_agents.json', self.agents)
+                    self.save_file('tokens.json', self.tokens)
+                    await self.send_message(user, "token_success", self.get_keyboard("main", user), {"role": role.capitalize()})
+                    logger.info(f"User {user} authorized as {role} with token {token}")
+            else:
+                await self.send_message(user, "token_invalid", self.get_keyboard("main", user))
+        except ValueError:
+            await self.send_message(user, "invalid_format", self.get_keyboard("main", user), {"text": "/token <токен>", "example": "/token abc123"})
+
+    async def list_pending_questions(self, user_id):
+        if not self.pending_questions:
+            await self.send_message(user_id, "no_pending_questions", self.get_keyboard("response", user_id))
+            return
+        questions_list = "\n".join(
+            [f"◾ Токен: {token[:8]}... | ID: {data['user_id']} | Вопрос: {data['message'][:50]}... | Время: {data['timestamp'].strftime('%H:%M:%S')}" 
+             for token, data in self.pending_questions.items()]
+        )
+        await self.send_message(user_id, f"▸ Открытые вопросы:\n{questions_list}", self.get_keyboard("response", user_id))
+
+    async def show_questions_for_response(self, user_id):
+        if not self.pending_questions:
+            await self.send_message(user_id, "no_pending_questions", self.get_keyboard("response", user_id))
+            return
+        await self.send_message(user_id, "select_question", await self.get_question_keyboard())
+
+    async def async_action(self, action):
+        await asyncio.sleep(0)
+        action()
+
+    async def process_action(self, user, action, text):
+        if action in ["staff", "bug"]:
+            success = await self.send_admin(user, text, action)
+            await self.send_message(user, f"report_{action}_sent" if success else f"report_{action}_failed", self.get_keyboard("main", user))
+            self.actions.pop(user, None)
+        elif action == "question":
+            token = str(uuid.uuid4())
+            success = await self.send_admin(user, text, "question", token)
+            await self.send_message(user, "question_sent" if success else "question_failed", self.get_keyboard("main", user), {"token": token})
+            self.actions.pop(user, None)
+        elif action == "broadcast":
+            if str(user) in self.agents and self.agents[str(user)].get("role") in ["admin", "manager"]:
+                if len(text) > 4096:
+                    await self.send_message(user, "message_too_long", self.get_keyboard("admin", user))
+                else:
+                    sent_count = 0
+                    for uid in self.stats["users"]:
+                        if int(uid) not in self.banned:
+                            await self.send_message(int(uid), f"📢 ОПОВЕЩЕНИЕ:\n{text}", self.get_keyboard("main", int(uid)))
+                            sent_count += 1
+                    await self.send_admin(user, f"📢 Объявление отправлено {sent_count} пользователям.", "broadcast")
+                    await self.send_message(user, "broadcast_sent", self.get_keyboard("admin", user))
+            self.actions.pop(user, None)
+        elif action == "add_agent":
+            try:
+                agent_id, role = text.split()
+                if role not in ["agent", "admin", "manager"]:
+                    raise ValueError
+                agent_id = int(agent_id)
+                if agent_id == user:
+                    await self.send_message(user, "self_agent", self.get_keyboard("manage_agents", user))
+                elif str(agent_id) in self.agents:
+                    await self.send_message(user, "already_agent", self.get_keyboard("manage_agents", user), {"agent_id": agent_id})
+                else:
+                    self.agents[str(agent_id)] = {"role": role}
+                    self.save_file('candyxpe_agents.json', self.agents)
+                    await self.send_message(user, "agent_added", self.get_keyboard("admin", user), {"role": role.capitalize(), "agent_id": agent_id})
+                    await self.send_admin(user, f"{role.capitalize()} @{agent_id} назначен.", "add_agent")
+            except ValueError:
+                await self.send_message(user, "invalid_format", self.get_keyboard("action", user), {"text": "<ID> <agent/admin/manager>", "example": "123456 agent"})
+            self.actions.pop(user, None)
+        elif action == "remove_agent":
+            try:
+                agent_id = int(text)
+                if agent_id == user:
+                    await self.send_message(user, "self_remove", self.get_keyboard("manage_agents", user))
+                elif str(agent_id) in self.agents:
+                    role = self.agents[str(agent_id)]["role"]
+                    del self.agents[str(agent_id)]
+                    self.save_file('candyxpe_agents.json', self.agents)
+                    await self.send_message(user, "agent_removed", self.get_keyboard("admin", user), {"role": role.capitalize(), "agent_id": agent_id})
+                    await self.send_admin(user, f"{role.capitalize()} @{agent_id} снят.", "remove_agent")
+                else:
+                    await self.send_message(user, "not_agent", self.get_keyboard("manage_agents", user), {"agent_id": agent_id})
+            except ValueError:
+                await self.send_message(user, "invalid_id", self.get_keyboard("action", user))
+            self.actions.pop(user, None)
+        elif action == "ban":
+            try:
+                target_id, hours = map(int, text.split())
+                if target_id == user:
+                    await self.send_message(user, "self_ban", self.get_keyboard("ban_user", user))
+                elif str(target_id) in self.agents:
+                    await self.send_message(user, "agent_ban", self.get_keyboard("ban_user", user))
+                else:
+                    self.banned[target_id] = datetime.now() + timedelta(hours=hours)
+                    await self.send_message(user, "banned", self.get_keyboard("ban_user", user), {"target_id": target_id, "hours": hours})
+                    await self.send_message(target_id, "banned_notify", self.get_keyboard("main", target_id), {"hours": hours})
+                    await self.send_admin(user, f"@{target_id} забанен на {hours} часов.", "ban")
+            except ValueError:
+                await self.send_message(user, "invalid_format", self.get_keyboard("action", user), {"text": "<ID> <hours>", "example": "123456 24"})
+            self.actions.pop(user, None)
+        elif action == "unban":
+            try:
+                target_id = int(text)
+                if target_id in self.banned:
+                    del self.banned[target_id]
+                    await self.send_message(user, "unbanned", self.get_keyboard("ban_user", user), {"target_id": target_id})
+                    await self.send_message(target_id, "unbanned_notify", self.get_keyboard("main", target_id))
+                    await self.send_admin(user, f"@{target_id} разбанен.", "unban")
+                else:
+                    await self.send_message(user, "not_banned", self.get_keyboard("ban_user", user), {"target_id": target_id})
+            except ValueError:
+                await self.send_message(user, "invalid_id", self.get_keyboard("action", user))
+            self.actions.pop(user, None)
+        elif action == "answer_user":
+            if str(user) in self.agents:
+                token = self.actions[user].get("current_token")
+                if token and token in self.pending_questions:
+                    target_id = self.pending_questions[token]["user_id"]
+                    await self.send_message(target_id, f"📢 Ответ на ваш вопрос (Токен: {token}):\n{text}", self.get_keyboard("main", target_id))
+                    await self.send_message(user, "response_sent", self.get_keyboard("response", user), {"user_id": target_id})
+                    del self.pending_questions[token]
+                    logger.info(f"Agent {user} responded to user {target_id} (token: {token}): {text[:50]}")
+                else:
+                    await self.send_message(user, "invalid_id", self.get_keyboard("response", user))
+            self.actions.pop(user, None)
+
+    def check_spam(self, user):
+        now = time.time()
+        self.spam[user] = [t for t in self.spam.get(user, []) if now - t < 60]
+        if len(self.spam[user]) >= 25:
+            logger.warning(f"User {user} exceeded message limit (spam)")
             return False
-        self.spam_protection[user_id].append(current_time)
+        self.spam[user].append(now)
         return True
 
-    async def _process_action(self, user_id, action, text, attachments=None):
-        try:
-            if action not in ["staff", "bug", "broadcast", "ban", "unban", "add_agent", "remove_agent"]:
-                await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
+    def setup_handlers(self):
+        @self.dp.message(CommandStart())
+        async def start_command(message: types.Message):
+            await self.send_message(message.from_user.id, "welcome", self.get_keyboard("main", message.from_user.id))
+
+        @self.dp.callback_query()
+        async def handle_callback(callback: types.CallbackQuery):
+            user_id = callback.from_user.id
+            if not str(user_id) in self.agents:
+                await callback.answer("Доступ запрещен")
                 return
-            actions = {
-                "staff": self._handle_report,
-                "bug": self._handle_report,
-                "broadcast": self._handle_broadcast,
-                "ban": self._handle_ban,
-                "unban": self._handle_unban,
-                "add_agent": self._handle_add_agent,
-                "remove_agent": self._handle_remove_agent
+            if callback.data.startswith("answer_"):
+                token = callback.data.split("_")[1]
+                if token in self.pending_questions:
+                    self.actions[user_id] = {"action": "answer_user", "current_token": token}
+                    question = self.pending_questions[token]["message"]
+                    await self.send_message(user_id, "enter_response", self.get_keyboard("action", user_id), {"token": token, "question": question})
+                else:
+                    await self.send_message(user_id, "no_pending_questions", self.get_keyboard("response", user_id))
+            elif callback.data == "back_to_response":
+                await self.send_message(user_id, "response_menu", self.get_keyboard("response", user_id))
+            await callback.answer()
+
+        @self.dp.message()
+        async def handle_message(message: types.Message):
+            user = message.from_user.id
+            text = message.text.strip() if message.text else ""
+            logger.debug(f"Processing message from {user}, text: {text}")
+            self.banned = {uid: expiry for uid, expiry in self.banned.items() if datetime.now() <= expiry}
+            if user in self.banned:
+                await self.send_message(user, "banned_user", self.get_keyboard("main", user))
+                return
+            if not self.check_spam(user):
+                await self.send_message(user, "error", self.get_keyboard("main", user))
+                return
+            self.stats["users"].add(user)
+            self.stats["messages"] += 1
+
+            button_commands = {
+                "🤖️ ПОДДЕРЖКА ИНТЕЛЛЕКТА": "ai_agent",
+                "❓ Задать ВОПРОС": "ask_question",
+                "📝 ЖАЛОБА НА ПЕРСОНАЛ": "report_staff",
+                "⚠️ ВОЗНИКЛА НЕПОЛАДКА": "report_bug",
+                "🔄 ЗАВЕРШИТЬ ПОДДЕРЖКУ": "end_ai",
+                "🔄 АННУЛИРОВАТЬ ОПЕРАЦИЮ": "cancel",
+                "🛠 ПАНЕЛЬ УПРАВЛЕНИЯ": "admin_panel",
+                "🧑‍🏫 УПРАВЛЕНИЕ ШТАТОМ": "manage_agents",
+                "⛏ БЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ": "ban_user",
+                "📢 МАССОВОЕ ОПОВЕЩЕНИЕ": "broadcast",
+                "👥 ДОБАВЛЕНИЕ СОТРУДНИКА": "add_agent",
+                "🗑 УДАЛЕНИЕ СОТРУДНИКА": "remove_agent",
+                "🔒 ЗАБЛОКИРОВАТЬ ДОСТУП": "ban",
+                "🔓 РАЗБЛОКИРОВКА ДОСТУПА": "unban",
+                "📬 МЕНЮ ОТВЕТОВ": "response_menu",
+                "📬 ОТВЕТИТЬ ПОЛЬЗОВАТЕЛЮ": "answer_user",
+                "📋 СПИСОК ВОПРОСОВ": "list_questions",
+                "🔄 ВЕРНУТЬСЯ В МЕНЮ": "cancel"
             }
-            handler = actions.get(action)
-            if handler:
-                await handler(user_id, text, attachments if action in ["staff", "bug"] else None)
-            else:
-                await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-        finally:
-            self.user_action_mode.pop(user_id, None)
 
-    async def _handle_ai_message(self, user_id, text):
-        if text.lower() in {"выйти", "выход", "стоп"}:
-            await self._handle_command(user_id, "end_ai")
-        else:
-            ai_response = await self._get_ai_response(user_id, text)
-            await self._process_ai_response(user_id, ai_response)
-
-    async def _handle_human_message(self, user_id, text, attachments=None):
-        await self._send_to_admin("telegram", user_id, text, "agent", attachments)
-
-class TelegramBot(BotCore):
-    def __init__(self, telegram_token, admin_chat_id):
-        super().__init__(admin_chat_id)
-        self.telegram_token = telegram_token
-        self.app = Application.builder().token(self.telegram_token).build()
-
-    async def _get_user_info(self, user_id):
-        try:
-            user = await self.app.bot.get_chat(user_id)
-            return f"\n👤 @{user.username or f'id{user_id}'}\n📲 Диалог: Telegram обращение."
-        except Exception:
-            return f"\n👤 id{user_id}\n📲 Диалог: Telegram обращение."
-
-    async def _send_message(self, user_id, message_key, keyboard=None, info=None):
-        if not isinstance(user_id, int):
-            return
-        msg = self._MESSAGES.get(message_key, message_key)
-        if info:
-            try:
-                msg = msg.format(**info)
-            except KeyError:
-                msg = message_key
-        cleaned_message = self.clean_message(msg)
-        try:
-            if await self._check_user_permission(user_id):
-                await self.app.bot.send_message(chat_id=user_id, text=cleaned_message, reply_markup=keyboard)
-            else:
-                await self.app.bot.send_message(chat_id=user_id, text=self._MESSAGES["permission_denied"])
-        except Exception:
-            await self.app.bot.send_message(user_id, text=self._MESSAGES["permission_denied"])
-
-    async def _process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        text = update.message.text.strip() if update.message.text else ""
-        try:
-            self.banned_users = {uid: expiry for uid, expiry in self.banned_users.items() if datetime.now() <= expiry}
-            if user_id in self.banned_users:
-                await self._send_message(user_id, "banned_user", await self._get_keyboard("main", user_id))
+            if text.startswith("/"):
+                await self.process_command(user, text[1:].split()[0], message)
                 return
-            if not await self._check_spam(user_id):
-                await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-                return
-            self.stats["users"].add(user_id)
-            self.stats["messages_processed"] += 1
-            if text.startswith('/'):
-                await self._handle_command(user_id, text[1:])
+            if text in button_commands:
+                await self.process_command(user, button_commands[text], message)
                 return
             if not text:
-                await self._send_message(user_id, "no_input", await self._get_keyboard("main", user_id))
+                await self.send_message(user, "no_input", self.get_keyboard("main", user))
                 return
-            if user_id in self.user_human_mode:
-                attachments = []
-                if update.message.document or update.message.photo:
-                    if update.message.document:
-                        attachments.append(update.message.document.file_id)
-                    elif update.message.photo:
-                        attachments.append(update.message.photo[-1].file_id)
-                await self._handle_human_message(user_id, text, ",".join(attachments) if attachments else None)
+            if user in self.actions:
+                await self.process_action(user, self.actions[user]["action"] if isinstance(self.actions[user], dict) else self.actions[user], text)
                 return
-            if user_id in self.user_action_mode:
-                attachments = []
-                if update.message.document or update.message.photo:
-                    if update.message.document:
-                        attachments.append(update.message.document.file_id)
-                    elif update.message.photo:
-                        attachments.append(update.message.photo[-1].file_id)
-                await self._process_action(user_id, self.user_action_mode[user_id], text, join(attachments) if attachments else None)
+            if user in self.ai_users:
+                if text.lower() in {"выйти", "выход", "стоп"}:
+                    await self.process_command(user, "end_ai", message)
+                else:
+                    response = self.get_ai_response(user, text)
+                    await self.send_message(user, response, self.get_keyboard("ai", user))
                 return
-            if user_id in self.user_ai_mode:
-                await self._send_message(user_id, "ai_mode", await self._get_keyboard("ai", user_id))
-            if text.lower() in ["start", "привет", "прод"]:
-                await self._send_message(user_id, "welcome", await self._get_keyboard("main", user_id))
+            if text.lower() in {"начать", "привет", "продвет"}:
+                await self.send_message(user, "welcome", self.get_keyboard("main", user))
             else:
-                await self._send_message(user_id, "unknown", await self._get_keyboard("main", user_id))
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
-            await self._reset_user_state(user_id)
-
-    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        callback_data = update.callback_query.data
-        try:
-            await self._handle_command(user_id, callback_data)
-            await update.callback_query.answer()
-        except Exception:
-            await self._send_message(user_id, "error", await self._get_keyboard("main", user_id))
+                await self.send_message(user, "unknown", self.get_keyboard("main", user))
 
     async def run(self):
-        print(f"\nБот технической поддержки Candyx. (TG-версия)\n{'-'*40}")
+        print(f"\n🚖 CandyxPE v{self.VERSION} {self.CODE_NAME}\n{'-' * 40}")
         print(f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Версия: {VERSION}")
-        print(f"Техподдержка by vatkovskydev\n{'-'*40}\n")
-        self.app.add_handler(CommandHandler("start", self._process_message))
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._process_message))
-        self.app.add_handler(CallbackQueryHandler(self._handle_callback))
-        await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling()
-        while True:
-            await asyncio.sleep(3600)
-
-async def main():
-    TELEGRAM_TOKEN = "suslov:daun"
-    ADMIN_CHAT_ID = 2
-
-    telegram_bot = TelegramBot(TELEGRAM_TOKEN, ADMIN_CHAT_ID)
-    await telegram_bot.run()
+        print(f"Техподдержка CandyxPE by vatkovskydev под руководством dsuslov67\n{'-' * 40}\n")
+        logger.info("Bot started")
+        await self.dp.start_polling(self.bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    TELEGRAM_TOKEN = "7738965237:AAGIkAz01LRaTtPII8LPxyUoYD0ucy5IgB4"
+    ADMIN_CHAT_ID = -1002739303737
+    bot = SupportBot(TELEGRAM_TOKEN, ADMIN_CHAT_ID)
+    asyncio.run(bot.run())
